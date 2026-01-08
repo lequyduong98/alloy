@@ -1,0 +1,55 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9095
+limits_config:
+  allow_structured_metadata: false
+# Sử dụng common để cấu hình storage một lần duy nhất
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /tmp/loki
+  storage:
+    s3:
+      endpoint: minio:9000
+      bucketnames: loki-bucket
+      access_key_id: minioadmin
+      secret_access_key: minioadmin
+      insecure: true
+      s3forcepathstyle: true
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2020-10-27"
+      store: boltdb-shipper
+      object_store: s3
+      schema: v11
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  boltdb_shipper:
+    active_index_directory: /tmp/loki/index
+    cache_location: /tmp/loki/cache
+
+# Đã xóa field shared_store gây lỗi
+compactor:
+  working_directory: /tmp/loki/compactor
+
+memberlist:
+  # Sửa lỗi StringSlice bằng cách thêm ngoặc vuông
+  bind_addr: ["0.0.0.0"]
+  bind_port: 7946
+
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /tmp/loki/rules
+  rule_path: /tmp/loki/rules-data
+  alertmanager_url: http://alertmanager.service.local

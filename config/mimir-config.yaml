@@ -1,0 +1,17 @@
+# mimir-config.yaml đã sửa lỗi
+server:
+  http_listen_port: 9009
+
+blocks_storage:
+  backend: s3
+  # Khai báo bucket_name dưới khối s3
+  s3:
+    bucket_name: mimir-bucket 
+    endpoint: minio:9000      
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    insecure: true           
+
+limits:
+  ingestion_rate: 100000 
+  ingestion_burst_size: 200000

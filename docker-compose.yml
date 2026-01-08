@@ -1,0 +1,184 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------
+  # 1. STORAGE: MinIO (Bộ lưu trữ đối tượng cho Mimir, Loki, Tempo)
+  # ----------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - observ-net
+  # 1.5. INIT: Service Khởi tạo MinIO Buckets
+  init-minio:
+    image: minio/mc:latest
+    container_name: init-minio
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin) do echo 'Waiting for MinIO...' && sleep 1; done;
+      /usr/bin/mc mb myminio/mimir-bucket --ignore-existing;
+      /usr/bin/mc mb myminio/loki-bucket --ignore-existing;
+      /usr/bin/mc mb myminio/tempo-bucket --ignore-existing;
+      exit 0;
+      "
+    depends_on:
+      minio:
+        condition: service_healthy # Đợi cho đến khi healthcheck của minio thành công
+    networks:
+      - observ-net
+  # ----------------------------------------------------
+  # 2. BACKEND: Grafana Mimir (Metrics Storage - Monolithic)
+  # ----------------------------------------------------
+  mimir:
+    image: grafana/mimir:latest
+    container_name: mimir
+    ports:
+      - "9009:9009" # Cổng Remote Write và Truy vấn
+    volumes:
+      - ./config/mimir-config.yaml:/etc/mimir/mimir-config.yaml
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+    command:
+      - --config.file=/etc/mimir/mimir-config.yaml
+      - --target=all # Chế độ Monolithic
+    depends_on:
+      - minio
+      - init-minio # Thêm phụ thuộc vào service khởi tạo
+    restart: unless-stopped
+    networks:
+      - observ-net
+
+  # ----------------------------------------------------
+  # 3. BACKEND: Grafana Loki (Logs Storage - Monolithic)
+  # ----------------------------------------------------
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    ports:
+      - "3100:3100" # Cổng Logs Ingestion (Promtail/Alloy Write)
+    volumes:
+      - ./config/loki-config.yaml:/etc/loki/loki-config.yaml
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+    command: -config.file=/etc/loki/loki-config.yaml
+    depends_on:
+      - minio
+      - init-minio # Thêm phụ thuộc vào service khởi tạo
+    restart: unless-stopped
+    networks:
+      - observ-net
+
+  # ----------------------------------------------------
+  # 4. BACKEND: Grafana Tempo (Traces Storage)
+  # ----------------------------------------------------
+  tempo:
+    image: grafana/tempo:latest
+    container_name: tempo
+    ports:
+      # OTLP Ingestion ports
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    volumes:
+      - ./config/tempo-config.yaml:/etc/tempo/tempo-config.yaml
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+    command: -config.file=/etc/tempo/tempo-config.yaml
+    depends_on:
+      - minio
+      - init-minio # Thêm phụ thuộc vào service khởi tạo
+    restart: unless-stopped
+    networks:
+      - observ-net
+
+  # ----------------------------------------------------
+  # 5. AGENT: Grafana Alloy (Collector/Agent)
+  # ----------------------------------------------------
+  alloy:
+    image: grafana/alloy:latest
+    container_name: alloy
+    ports:
+      - "12345:12345" # Cổng Alloy API/UI/Metrics
+    volumes:
+      # Ánh xạ cấu hình Alloy
+      - ./config/alloy-config.alloy:/etc/alloy/config.alloy
+      # Tùy chọn: Volume cho dữ liệu Alloy (lưu trạng thái/logs cục bộ)
+      - alloy_data:/var/lib/alloy/data
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    depends_on:
+      - mimir
+      - loki
+      - tempo
+    restart: unless-stopped
+    networks:
+      - observ-net
+
+  # ----------------------------------------------------
+  # 6. FRONTEND: Grafana (Giao diện người dùng)
+  # ----------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000" # Cổng giao diện web Grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      # Tự động cấu hình Data Sources (Mimir, Loki, Tempo)
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      - mimir
+      - loki
+      - tempo
+    restart: unless-stopped
+    networks:
+      - observ-net
+  # 7. APPLICATION TESTER: Tạo Logs, Metrics, và Traces liên tục
+  test-app-generator:
+    build:
+      context: ./test-app
+      dockerfile: Dockerfile
+    container_name: test-app-generator
+    ports:
+      - "8000:8000" # Mở cổng Prometheus Metrics để Alloy có thể Scrape
+    environment:
+      # Cấu hình này được sử dụng trong Python script
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
+    # Cần phải phụ thuộc vào Alloy để đảm bảo Alloy Collector chạy trước
+    depends_on:
+      - alloy
+    restart: unless-stopped
+    networks:
+      - observ-net
+# Định nghĩa mạng và volumes
+networks:
+  observ-net:
+    driver: bridge
+
+volumes:
+  minio_data:
+  alloy_data:
+  grafana_data:
