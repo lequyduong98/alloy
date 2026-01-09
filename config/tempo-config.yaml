@@ -3,14 +3,25 @@
 server:
   http_listen_port: 3200
   grpc_listen_port: 9095
-
+# *** THÊM KHỐI MEMBERLIST VÀO ĐÂY ***
+memberlist:
+  # Cổng memberlist phải được mở trong Docker Compose
+  bind_port: 7946 
+  # Cấu hình "Join" để các replicas (nếu có) tìm thấy nhau
+  # Trong môi trường Docker Compose, bạn chỉ cần trỏ đến chính nó 
+  # hoặc dùng một địa chỉ bootstrap tĩnh.
+  join_members:
+    - tempo:7946 
+# *** HẾT KHỐI MEMBERLIST ***
 distributor:
   receivers:
     otlp:
       # Lỗi cần thêm khối 'protocols'
       protocols:
         grpc:
+          endpoint: 0.0.0.0:4317
         http:
+          endpoint: 0.0.0.0:4318
 
 storage:
   # Cấu trúc phải là storage -> trace -> backend/wal/s3
@@ -22,3 +33,7 @@ storage:
       endpoint: minio:9000
       bucket: tempo-bucket
       insecure: true
+
+metrics_generator:
+  storage:
+    path: /tmp/tempo/generator  # Đảm bảo đường dẫn này tồn tại và có thể ghi được

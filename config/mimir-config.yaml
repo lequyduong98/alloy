@@ -1,7 +1,13 @@
+target: all
 # mimir-config.yaml đã sửa lỗi
 server:
   http_listen_port: 9009
-
+# QUAN TRỌNG: Cấu hình Ingester cho Single Node
+ingester:
+  ring:
+    replication_factor: 1 # <--- Dòng này sửa lỗi "unhealthy instances"
+    kvstore:
+      store: memberlist
 blocks_storage:
   backend: s3
   # Khai báo bucket_name dưới khối s3

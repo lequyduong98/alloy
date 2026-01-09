@@ -22,7 +22,12 @@ datasources:
     url: http://tempo:3200
     version: 1
     editable: true
-    # Thiết lập liên kết với Loki (Trace to Logs)
     jsonData:
+      traces:
+        customQueryEndpoint: tempo:9095
+        grpcClientSettings:
+          tsl:
+            insecure: true
+    # Thiết lập liên kết với Loki (Trace to Logs)
       lokiSearch:
         datasourceUid: loki-ds
