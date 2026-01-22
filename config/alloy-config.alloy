@@ -52,10 +52,14 @@ otelcol.receiver.otlp "traces_receiver" {
 
   output {
     traces  = [otelcol.exporter.otlp.tempo_otlp.input]
-    metrics = []
-    // Nếu app gửi log qua OTLP, bạn có thể xử lý ở đây, nhưng dùng Docker logs (bên dưới) an toàn hơn cho setup này
-    logs    = [] 
+    // Thêm dòng này để nhận Metrics từ Java/NodeJS OTLP
+    metrics = [otelcol.exporter.prometheus.to_mimir.input] 
   }
+}
+
+// Thêm bộ chuyển đổi OTLP Metrics -> Prometheus Metrics
+otelcol.exporter.prometheus "to_mimir" {
+  forward_to = [prometheus.remote_write.mimir_remote_write.receiver]
 }
 
 // ------------------------------------------------------------------
@@ -67,27 +71,56 @@ discovery.docker "docker_containers" {
   host = "unix:///var/run/docker.sock"
 }
 
-// 3.2. Lọc chỉ lấy log của container 'test-app-generator' (Tùy chọn)
-// Nếu bạn muốn lấy log của TẤT CẢ container, hãy bỏ qua khối này và dùng discovery.docker.docker_containers.targets ở dưới
-discovery.relabel "filter_test_app" {
+// // 3.2. Lọc chỉ lấy log của container 'test-app-generator' (Tùy chọn)
+// // Nếu bạn muốn lấy log của TẤT CẢ container, hãy bỏ qua khối này và dùng discovery.docker.docker_containers.targets ở dưới
+// discovery.relabel "filter_test_app" {
+//   targets = discovery.docker.docker_containers.targets
+
+//   rule {
+//     source_labels = ["__meta_docker_container_name"]
+//     regex         = "/test-app-generator" // Tên container trong docker-compose (có dấu / ở trước)
+//     action        = "keep"
+//   }
+// }
+
+// // 3.3. Đọc log và Gắn nhãn
+// loki.source.docker "docker_logs" {
+//   host       = "unix:///var/run/docker.sock"
+//   // Sử dụng targets từ bộ lọc ở trên. 
+//   // Nếu muốn lấy hết log hệ thống, đổi thành: discovery.docker.docker_containers.targets
+//   targets    = discovery.relabel.filter_test_app.output 
+  
+//   forward_to = [loki.process.add_labels.receiver]
+// }
+
+
+// 3.2. Chuyển đổi nhãn: Lấy tên container làm nhãn 'job' và 'container'
+discovery.relabel "docker_logs_relabel" {
   targets = discovery.docker.docker_containers.targets
 
+  // Lấy tên container (bỏ dấu / ở đầu) gán vào nhãn job
   rule {
     source_labels = ["__meta_docker_container_name"]
-    regex         = "/test-app-generator" // Tên container trong docker-compose (có dấu / ở trước)
-    action        = "keep"
+    regex         = "/(.+)"
+    target_label  = "job"
+  }
+  
+  // Giữ lại tên container gốc để dễ lọc
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.+)"
+    target_label  = "container"
   }
 }
 
-// 3.3. Đọc log và Gắn nhãn
+// 3.3. Đọc log từ các container đã tìm thấy
 loki.source.docker "docker_logs" {
   host       = "unix:///var/run/docker.sock"
-  // Sử dụng targets từ bộ lọc ở trên. 
-  // Nếu muốn lấy hết log hệ thống, đổi thành: discovery.docker.docker_containers.targets
-  targets    = discovery.relabel.filter_test_app.output 
-  
-  forward_to = [loki.process.add_labels.receiver]
+  targets    = discovery.relabel.docker_logs_relabel.output 
+  forward_to = [loki.write.loki_write.receiver]
 }
+
+
 
 // 3.4. Xử lý Log: Thêm nhãn job để dễ query trong Grafana
 loki.process "add_labels" {

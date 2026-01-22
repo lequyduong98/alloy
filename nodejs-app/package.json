@@ -1,0 +1,10 @@
+{
+  "name": "nodejs-app",
+  "version": "1.0.0",
+  "main": "app.js",
+  "dependencies": {
+    "@opentelemetry/auto-instrumentations-node": "^0.41.0",
+    "@opentelemetry/sdk-node": "^0.48.0",
+    "express": "^4.18.2"
+  }
+}

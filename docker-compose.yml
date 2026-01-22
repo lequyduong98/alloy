@@ -189,6 +189,33 @@ services:
     restart: unless-stopped
     networks:
       - observ-net
+  nodejs-app:
+      build: ./nodejs-app
+      container_name: nodejs-app
+      environment:
+        - OTEL_SERVICE_NAME=nodejs-app
+        - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318 # Dùng cổng HTTP của Alloy
+        - TZ=Asia/Ho_Chi_Minh
+      networks:
+        - observ-net
+      depends_on:
+        - alloy
+
+  java-app:
+      build: ./java-app
+      container_name: java-app
+      environment:
+        - OTEL_SERVICE_NAME=java-app
+        - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317 # Java thường dùng gRPC (4317)
+        - OTEL_EXPORTER_OTLP_PROTOCOL=grpc    # THÊM DÒNG NÀY
+        - OTEL_METRICS_EXPORTER=otlp
+        - OTEL_LOGS_EXPORTER=otlp
+        - TZ=Asia/Ho_Chi_Minh
+
+      networks:
+        - observ-net
+      depends_on:
+        - alloy
 # Định nghĩa mạng và volumes
 networks:
   observ-net:
