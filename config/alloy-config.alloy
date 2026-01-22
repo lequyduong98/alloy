@@ -1,9 +1,38 @@
-// ------------------------------------------------------------------
-// 1. Cấu hình Nơi Dữ liệu Được Gửi Đến (Exports)
-// ------------------------------------------------------------------
+// --- 1. RECEIVER: Nhận dữ liệu OTLP từ Java (4317) và Node.js (4318) ---
+otelcol.receiver.otlp "default" {
+  grpc { endpoint = "0.0.0.0:4317" }
+  http { endpoint = "0.0.0.0:4318" }
 
-// 1.1. Exporter cho Mimir (Metrics)
-prometheus.remote_write "mimir_remote_write" {
+  output {
+    metrics = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+  }
+}
+
+// --- 2. SCRAPER: Lấy metrics từ Python App (test-app-generator) ---
+prometheus.scrape "python_app" {
+  targets = [{"__address__" = "test-app-generator:8000"}]
+  forward_to = [prometheus.remote_write.mimir_backend.receiver]
+}
+
+// --- 3. PROCESSOR: Gom nhóm dữ liệu ---
+otelcol.processor.batch "default" {
+  output {
+    metrics = [otelcol.exporter.prometheus.mimir.input]
+    traces  = [otelcol.exporter.otlp.tempo.input]
+    logs    = [otelcol.exporter.loki.loki_backend.input]
+  }
+}
+
+// --- 4. EXPORTERS ---
+
+// Đẩy Metrics về Mimir
+otelcol.exporter.prometheus "mimir" {
+  forward_to = [prometheus.remote_write.mimir_backend.receiver]
+}
+
+prometheus.remote_write "mimir_backend" {
   endpoint {
     url = "http://mimir:9009/api/v1/push"
     headers = {
@@ -12,123 +41,21 @@ prometheus.remote_write "mimir_remote_write" {
   }
 }
 
-// 1.2. Exporter cho Loki (Logs)
-loki.write "loki_write" {
+// Đẩy Traces về Tempo
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls { insecure = true }
+  }
+}
+
+// Đẩy Logs về Loki
+otelcol.exporter.loki "loki_backend" {
+  forward_to = [loki.write.loki_push.receiver]
+}
+
+loki.write "loki_push" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"
   }
-}
-
-// 1.3. Exporter cho Tempo (Traces)
-otelcol.exporter.otlp "tempo_otlp" {
-  client {
-    endpoint = "tempo:4317"
-    tls {
-      insecure = true
-    }
-  }
-}
-
-// ------------------------------------------------------------------
-// 2. Thu thập và Định tuyến Dữ liệu
-// ------------------------------------------------------------------
-
-// 2.1. Metrics: Alloy tự giám sát
-prometheus.scrape "alloy_internal" {
-  targets    = [{__address__ = "127.0.0.1:12345", __scheme__ = "http", __metrics_path__ = "/metrics"}]
-  forward_to = [prometheus.remote_write.mimir_remote_write.receiver]
-}
-
-// 2.2. Metrics: Test App
-prometheus.scrape "test_app_metrics" {
-  targets    = [{__address__ = "test-app-generator:8000", __scheme__ = "http", job = "full-stack-tester"}]
-  forward_to = [prometheus.remote_write.mimir_remote_write.receiver]
-}
-
-// 2.3. Traces: OTLP Receiver
-otelcol.receiver.otlp "traces_receiver" {
-  http { endpoint = "0.0.0.0:4318" }
-  grpc { endpoint = "0.0.0.0:4317" }
-
-  output {
-    traces  = [otelcol.exporter.otlp.tempo_otlp.input]
-    // Thêm dòng này để nhận Metrics từ Java/NodeJS OTLP
-    metrics = [otelcol.exporter.prometheus.to_mimir.input] 
-  }
-}
-
-// Thêm bộ chuyển đổi OTLP Metrics -> Prometheus Metrics
-otelcol.exporter.prometheus "to_mimir" {
-  forward_to = [prometheus.remote_write.mimir_remote_write.receiver]
-}
-
-// ------------------------------------------------------------------
-// 3. LOGGING: Cấu hình mới để lấy Logs từ Docker (Thay thế phần đọc file)
-// ------------------------------------------------------------------
-
-// 3.1. Tìm kiếm các container đang chạy
-discovery.docker "docker_containers" {
-  host = "unix:///var/run/docker.sock"
-}
-
-// // 3.2. Lọc chỉ lấy log của container 'test-app-generator' (Tùy chọn)
-// // Nếu bạn muốn lấy log của TẤT CẢ container, hãy bỏ qua khối này và dùng discovery.docker.docker_containers.targets ở dưới
-// discovery.relabel "filter_test_app" {
-//   targets = discovery.docker.docker_containers.targets
-
-//   rule {
-//     source_labels = ["__meta_docker_container_name"]
-//     regex         = "/test-app-generator" // Tên container trong docker-compose (có dấu / ở trước)
-//     action        = "keep"
-//   }
-// }
-
-// // 3.3. Đọc log và Gắn nhãn
-// loki.source.docker "docker_logs" {
-//   host       = "unix:///var/run/docker.sock"
-//   // Sử dụng targets từ bộ lọc ở trên. 
-//   // Nếu muốn lấy hết log hệ thống, đổi thành: discovery.docker.docker_containers.targets
-//   targets    = discovery.relabel.filter_test_app.output 
-  
-//   forward_to = [loki.process.add_labels.receiver]
-// }
-
-
-// 3.2. Chuyển đổi nhãn: Lấy tên container làm nhãn 'job' và 'container'
-discovery.relabel "docker_logs_relabel" {
-  targets = discovery.docker.docker_containers.targets
-
-  // Lấy tên container (bỏ dấu / ở đầu) gán vào nhãn job
-  rule {
-    source_labels = ["__meta_docker_container_name"]
-    regex         = "/(.+)"
-    target_label  = "job"
-  }
-  
-  // Giữ lại tên container gốc để dễ lọc
-  rule {
-    source_labels = ["__meta_docker_container_name"]
-    regex         = "/(.+)"
-    target_label  = "container"
-  }
-}
-
-// 3.3. Đọc log từ các container đã tìm thấy
-loki.source.docker "docker_logs" {
-  host       = "unix:///var/run/docker.sock"
-  targets    = discovery.relabel.docker_logs_relabel.output 
-  forward_to = [loki.write.loki_write.receiver]
-}
-
-
-
-// 3.4. Xử lý Log: Thêm nhãn job để dễ query trong Grafana
-loki.process "add_labels" {
-  stage.static_labels {
-      values = {
-        job = "test-app-generator",
-        environment = "development",
-      }
-  }
-  forward_to = [loki.write.loki_write.receiver]
 }

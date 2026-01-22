@@ -4,7 +4,7 @@ datasources:
     type: prometheus
     uid: mimir-ds
     access: proxy
-    url: http://mimir:9009
+    url: http://mimir:9009/prometheus
     isDefault: true
     version: 1
     editable: true

@@ -1,4 +1,4 @@
-# Grafana Allot Demo Lab
+# Grafana Alloy Demo Lab
 
 # Running 
 

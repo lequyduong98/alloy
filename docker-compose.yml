@@ -161,9 +161,11 @@ services:
       # Tự động cấu hình Data Sources (Mimir, Loki, Tempo)
       - ./config/grafana/provisioning:/etc/grafana/provisioning
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      TZ: Asia/Ho_Chi_Minh # Thêm dòng này
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor,traceToMetrics,publicDashboards,appObservability # Bật tính năng APM chuyên dụng
+      - TZ=Asia/Ho_Chi_Minh
+      
     depends_on:
       - mimir
       - loki
