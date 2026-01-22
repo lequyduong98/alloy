@@ -1,9 +1,5 @@
-version: '3.8'
-
 services:
-  # ----------------------------------------------------
   # 1. STORAGE: MinIO (Bộ lưu trữ đối tượng cho Mimir, Loki, Tempo)
-  # ----------------------------------------------------
   minio:
     image: minio/minio:latest
     container_name: minio
@@ -41,9 +37,7 @@ services:
         condition: service_healthy # Đợi cho đến khi healthcheck của minio thành công
     networks:
       - observ-net
-  # ----------------------------------------------------
   # 2. BACKEND: Grafana Mimir (Metrics Storage - Monolithic)
-  # ----------------------------------------------------
   mimir:
     image: grafana/mimir:latest
     container_name: mimir
@@ -65,9 +59,7 @@ services:
     restart: unless-stopped
     networks:
       - observ-net
-  # ----------------------------------------------------
   # 3. BACKEND: Grafana Loki (Logs Storage - Monolithic)
-  # ----------------------------------------------------
   loki:
     image: grafana/loki:latest
     container_name: loki
@@ -89,9 +81,7 @@ services:
     networks:
       - observ-net
 
-  # ----------------------------------------------------
   # 4. BACKEND: Grafana Tempo (Traces Storage)
-  # ----------------------------------------------------
   tempo:
     image: grafana/tempo:latest
     container_name: tempo
@@ -119,9 +109,7 @@ services:
     networks:
       - observ-net
     
-  # ----------------------------------------------------
   # 5. AGENT: Grafana Alloy (Collector/Agent)
-  # ----------------------------------------------------
   alloy:
     image: grafana/alloy:latest
     container_name: alloy
@@ -148,9 +136,7 @@ services:
       - observ-net
     environment:
       - TZ=Asia/Ho_Chi_Minh # Thêm dòng này
-  # ----------------------------------------------------
   # 6. FRONTEND: Grafana (Giao diện người dùng)
-  # ----------------------------------------------------
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
@@ -158,7 +144,6 @@ services:
       - "3000:3000" # Cổng giao diện web Grafana
     volumes:
       - grafana_data:/var/lib/grafana
-      # Tự động cấu hình Data Sources (Mimir, Loki, Tempo)
       - ./config/grafana/provisioning:/etc/grafana/provisioning
     environment:
       - GF_SECURITY_ADMIN_USER=admin
@@ -174,23 +159,20 @@ services:
     networks:
       - observ-net
   # 7. APPLICATION TESTER: Tạo Logs, Metrics, và Traces liên tục
-  test-app-generator:
-    build:
-      context: ./test-app
-      dockerfile: Dockerfile
-    container_name: test-app-generator
-    ports:
-      - "8000:8000" # Mở cổng Prometheus Metrics để Alloy có thể Scrape
-    environment:
-      # Cấu hình này được sử dụng trong Python script
-      - TZ=Asia/Ho_Chi_Minh # Thêm dòng này
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
-    # Cần phải phụ thuộc vào Alloy để đảm bảo Alloy Collector chạy trước
-    depends_on:
-      - alloy
-    restart: unless-stopped
-    networks:
-      - observ-net
+  python-app:
+      build: ./python-app
+      container_name: python-app
+      ports:
+        - "8000:8000"
+      environment:
+        - TZ=Asia/Ho_Chi_Minh
+        - OTEL_SERVICE_NAME=python-app
+        - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
+        - OTEL_EXPORTER_OTLP_PROTOCOL=grpc # Thêm để ổn định
+      depends_on:
+        - alloy
+      networks:
+        - observ-net
   nodejs-app:
       build: ./nodejs-app
       container_name: nodejs-app
@@ -210,6 +192,7 @@ services:
         - OTEL_SERVICE_NAME=java-app
         - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317 # Java thường dùng gRPC (4317)
         - OTEL_EXPORTER_OTLP_PROTOCOL=grpc    # THÊM DÒNG NÀY
+        - OTEL_TRACES_EXPORTER=otlp        # Đảm bảo exporter trace được bật
         - OTEL_METRICS_EXPORTER=otlp
         - OTEL_LOGS_EXPORTER=otlp
         - TZ=Asia/Ho_Chi_Minh
