@@ -21,6 +21,17 @@ ADD https://github.com/open-telemetry/opentelemetry-java-instrumentation/release
 COPY --from=build /app/target/*.jar app.jar
 
 # Biến môi trường cấu hình sẵn
+# ENV OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+
+#ENTRYPOINT ["java", "-javaagent:opentelemetry-javaagent.jar", "-Dotel.resource.attributes=service.name=java-app", "-jar", "app.jar"]
+
+# ... (Giữ nguyên phần build) ...
+
+ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://observability-alloy:4317
 ENV OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+ENV OTEL_LOGS_EXPORTER=otlp 
+# Lưu ý: Biến trên cho phép gửi Log qua OTLP trực tiếp từ Agent
+
+EXPOSE 8080
 
 ENTRYPOINT ["java", "-javaagent:opentelemetry-javaagent.jar", "-Dotel.resource.attributes=service.name=java-app", "-jar", "app.jar"]
